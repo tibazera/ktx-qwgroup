@@ -1,0 +1,118 @@
+name: QWLeague Upstream Sync
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Open an integration PR even when upstream is already merged'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: qwleague-upstream-sync
+  cancel-in-progress: false
+
+env:
+  FORK_BRANCH: port/antilag-1-and-2
+  UPSTREAM_REPOSITORY: niQQe/ktx
+  UPSTREAM_BRANCH: qwleague
+
+jobs:
+  prepare-integration-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout the Antilag fork
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FORK_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch QWLeague upstream
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add qwleague "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch --no-tags qwleague "+refs/heads/${UPSTREAM_BRANCH}:refs/remotes/qwleague/${UPSTREAM_BRANCH}"
+          upstream_sha="$(git rev-parse "qwleague/${UPSTREAM_BRANCH}")"
+          echo "sha=${upstream_sha}" >> "$GITHUB_OUTPUT"
+
+          if git merge-base --is-ancestor "$upstream_sha" HEAD && [ "${{ inputs.force }}" != "true" ]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "QWLeague is already merged at ${upstream_sha}."
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream into a review branch
+        if: steps.upstream.outputs.needed == 'true'
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream_sha="${{ steps.upstream.outputs.sha }}"
+          branch="automation/qwleague-${upstream_sha:0:12}"
+          git config user.name "qwleague-upstream-bot"
+          git config user.email "qwleague-upstream-bot@users.noreply.github.com"
+          git switch -c "$branch"
+
+          if ! git merge --no-ff --no-commit "qwleague/${UPSTREAM_BRANCH}"; then
+            git merge --abort || true
+            echo "QWLeague merge conflict for ${upstream_sha}. Manual Antilag integration is required." >&2
+            exit 1
+          fi
+
+          git commit -m "Merge QWLeague ${upstream_sha:0:12} into Antilag 1 fork"
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and verify the KTX gamecode
+        if: steps.upstream.outputs.needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential cmake binutils
+          cmake -S . -B build
+          cmake --build build --parallel
+          test -s build/qwprogs.so
+          nm -a build/qwprogs.so | grep -q '[[:space:]]antilag_lagmove_all_hitscan$'
+          nm -a build/qwprogs.so | grep -q '[[:space:]]antilag_lagmove_all_proj$'
+          nm -a build/qwprogs.so | grep -q '[[:space:]]SendEntity_Projectile$'
+          nm -a build/qwprogs.so | grep -q '[[:space:]]mm_player_token$'
+          grep -q 'cvar("sv_antilag") != 1' src/antilag.c
+          sha256sum build/qwprogs.so | tee qwleague-integration-sha256.txt
+
+      - name: Publish integration build evidence
+        if: steps.upstream.outputs.needed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwleague-integration-${{ steps.upstream.outputs.sha }}
+          path: |
+            build/qwprogs.so
+            qwleague-integration-sha256.txt
+          retention-days: 30
+
+      - name: Push review branch and open pull request
+        if: steps.upstream.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="${{ steps.merge.outputs.branch }}"
+          upstream_sha="${{ steps.upstream.outputs.sha }}"
+          git push origin "${branch}"
+          gh pr create \
+            --base "${FORK_BRANCH}" \
+            --head "${branch}" \
+            --title "Merge QWLeague ${upstream_sha:0:12} into Antilag 1 fork" \
+            --body "Automated upstream integration. KTX build and Antilag 1 symbol gates passed. Before merge/deployment, build matching CSQC, compile the latest dusty-qw/mvdsv:master, run the full audit, and complete a controlled runtime test. No server deployment is performed by this workflow."
