@@ -110,9 +110,25 @@ jobs:
           set -euo pipefail
           branch="${{ steps.merge.outputs.branch }}"
           upstream_sha="${{ steps.upstream.outputs.sha }}"
-          git push origin "${branch}"
-          gh pr create \
+          if git ls-remote --exit-code --heads origin "${branch}" > /dev/null; then
+            echo "Review branch ${branch} already exists; reusing it."
+          else
+            git push origin "${branch}"
+          fi
+
+          existing_pr="$(gh pr list \
+            --state open \
             --base "${FORK_BRANCH}" \
             --head "${branch}" \
-            --title "Merge QWLeague ${upstream_sha:0:12} into Antilag 1 fork" \
-            --body "Automated upstream integration. KTX build and Antilag 1 symbol gates passed. Before merge/deployment, build matching CSQC, compile the latest dusty-qw/mvdsv:master, run the full audit, and complete a controlled runtime test. No server deployment is performed by this workflow."
+            --json number \
+            --jq '.[0].number')"
+
+          if [ -n "${existing_pr}" ]; then
+            echo "Integration PR #${existing_pr} already exists; reusing it."
+          else
+            gh pr create \
+              --base "${FORK_BRANCH}" \
+              --head "${branch}" \
+              --title "Merge QWLeague ${upstream_sha:0:12} into Antilag 1 fork" \
+              --body "Automated upstream integration. KTX build and Antilag 1 symbol gates passed. Before merge/deployment, build matching CSQC, compile the latest dusty-qw/mvdsv:master, run the full audit, and complete a controlled runtime test. No server deployment is performed by this workflow."
+          fi
