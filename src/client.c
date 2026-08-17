@@ -1608,6 +1608,225 @@ qbool CanConnect(void)
 // self
 // params
 ///////////////
+qbool WeaponPrediction_SendEntity(int sendflags)
+{
+	gedict_t *wep = self;
+	gedict_t *owner = PROG_TO_EDICT(wep->s.v.owner);
+
+	if (owner != other)
+		return false;
+
+
+	/*
+	 * The mirror fields are updated before SetSendNeeded(), so a late first
+	 * callback can otherwise look like a tiny delta. Force one complete
+	 * owner baseline the first time this CSQC entity is actually serialized.
+	 */
+	if (!wep->cnt)
+	{
+		sendflags |= WEAPONINFO_INDEX | WEAPONINFO_AMMO_SHELLS | WEAPONINFO_AMMO_NAILS
+			| WEAPONINFO_AMMO_ROCKETS | WEAPONINFO_AMMO_CELLS | WEAPONINFO_ATTACK
+			| WEAPONINFO_TIMING | WEAPONINFO_PRED_PING;
+		wep->cnt = 1;
+	}
+
+	sendflags &= WEAPONINFO_INDEX | WEAPONINFO_AMMO_SHELLS | WEAPONINFO_AMMO_NAILS
+		| WEAPONINFO_AMMO_ROCKETS | WEAPONINFO_AMMO_CELLS | WEAPONINFO_ATTACK
+		| WEAPONINFO_TIMING | WEAPONINFO_PRED_PING;
+
+	WriteByte(MSG_CSQC, EZCSQC_WEAPONINFO);
+	WriteByte(MSG_CSQC, sendflags);
+
+	if (sendflags & WEAPONINFO_INDEX)
+	{
+		WriteByte(MSG_CSQC, owner->s.v.impulse);
+		WriteByte(MSG_CSQC, owner->weapon_index);
+	}
+	if (sendflags & WEAPONINFO_AMMO_SHELLS)
+		WriteByte(MSG_CSQC, owner->s.v.ammo_shells);
+	if (sendflags & WEAPONINFO_AMMO_NAILS)
+		WriteByte(MSG_CSQC, owner->s.v.ammo_nails);
+	if (sendflags & WEAPONINFO_AMMO_ROCKETS)
+		WriteByte(MSG_CSQC, owner->s.v.ammo_rockets);
+	if (sendflags & WEAPONINFO_AMMO_CELLS)
+		WriteByte(MSG_CSQC, owner->s.v.ammo_cells);
+
+	if (sendflags & WEAPONINFO_ATTACK)
+	{
+		WriteFloat(MSG_CSQC, owner->attack_finished);
+		WriteFloat(MSG_CSQC, owner->client_nextthink);
+		WriteByte(MSG_CSQC, owner->client_thinkindex);
+	}
+
+	if (sendflags & WEAPONINFO_TIMING)
+	{
+		WriteFloat(MSG_CSQC, owner->client_time);
+		WriteByte(MSG_CSQC, owner->s.v.weaponframe);
+	}
+
+	if (sendflags & WEAPONINFO_PRED_PING)
+	{
+		WriteByte(MSG_CSQC, owner->client_predflags);
+		WriteByte(MSG_CSQC, owner->client_ping);
+	}
+
+	return true;
+}
+
+void WeaponPrediction_CreateEnt(void);
+
+void WeaponPrediction_MarkSendFlags(void)
+{
+	gedict_t *wep = self->weapon_pred;
+	int sendflags = WEAPONINFO_TIMING;
+
+	// Map/mode reloads can leave the player without a valid weapon-info sidecar.
+	if (!wep || wep->s.v.owner != EDICT_TO_PROG(self) || wep->SendEntity != (func_t)WeaponPrediction_SendEntity)
+	{
+		self->weapon_pred = NULL;
+		WeaponPrediction_CreateEnt();
+		wep = self->weapon_pred;
+		if (!wep)
+		{
+			return;
+		}
+	}
+
+	if (!wep->cnt2 && iKey(self, "ezcsqc"))
+	{
+		WPredict_SendDefinitionsTo(self);
+		wep->cnt2 = 1;
+	}
+
+	if (!iKey(self, "ezcsqc_ready"))
+	{
+		return;
+	}
+	if (wep->s.v.impulse != self->s.v.impulse || wep->s.v.weapon != self->weapon_index)
+	{
+		sendflags |= WEAPONINFO_INDEX;
+		wep->s.v.impulse = self->s.v.impulse;
+		wep->s.v.weapon = self->weapon_index;
+	}
+
+	if (wep->s.v.ammo_shells != self->s.v.ammo_shells)
+	{
+		sendflags |= WEAPONINFO_AMMO_SHELLS;
+		wep->s.v.ammo_shells = self->s.v.ammo_shells;
+	}
+	if (wep->s.v.ammo_nails != self->s.v.ammo_nails)
+	{
+		sendflags |= WEAPONINFO_AMMO_NAILS;
+		wep->s.v.ammo_nails = self->s.v.ammo_nails;
+	}
+	if (wep->s.v.ammo_rockets != self->s.v.ammo_rockets)
+	{
+		sendflags |= WEAPONINFO_AMMO_ROCKETS;
+		wep->s.v.ammo_rockets = self->s.v.ammo_rockets;
+	}
+	if (wep->s.v.ammo_cells != self->s.v.ammo_cells)
+	{
+		sendflags |= WEAPONINFO_AMMO_CELLS;
+		wep->s.v.ammo_cells = self->s.v.ammo_cells;
+	}
+
+	if (wep->attack_finished != self->attack_finished || wep->client_think != self->client_think || wep->client_nextthink != self->client_nextthink)
+	{
+		sendflags |= WEAPONINFO_ATTACK;
+		wep->attack_finished = self->attack_finished;
+		wep->client_think = self->client_think;
+		wep->client_nextthink = self->client_nextthink;
+	}
+
+	if (wep->client_predflags != self->client_predflags || wep->client_ping != self->client_ping)
+	{
+		sendflags |= WEAPONINFO_PRED_PING;
+		wep->client_predflags = self->client_predflags;
+		wep->client_ping = self->client_ping;
+	}
+
+
+	trap_SetSendNeeded(NUM_FOR_EDICT(wep), sendflags, NUM_FOR_EDICT(self));
+}
+
+void WeaponPrediction_ResetBaseline(void)
+{
+	gedict_t *wep = self->weapon_pred;
+
+	if (!wep || !iKey(self, "ezcsqc_ready"))
+	{
+		return;
+	}
+
+	// A full baseline starts a new client prediction generation after respawn.
+	wep->s.v.impulse = self->s.v.impulse;
+	wep->s.v.weapon = self->weapon_index;
+	wep->s.v.ammo_shells = self->s.v.ammo_shells;
+	wep->s.v.ammo_nails = self->s.v.ammo_nails;
+	wep->s.v.ammo_rockets = self->s.v.ammo_rockets;
+	wep->s.v.ammo_cells = self->s.v.ammo_cells;
+	wep->attack_finished = self->attack_finished;
+	wep->client_think = self->client_think;
+	wep->client_nextthink = self->client_nextthink;
+	wep->client_predflags = self->client_predflags;
+	wep->client_ping = self->client_ping;
+	SetSendNeeded(wep, SENDFLAGS_ALL, NUM_FOR_EDICT(self));
+}
+
+
+void WeaponPrediction_Cleanup(void)
+{
+	if (self->weapon_pred != NULL)
+	{
+		ent_remove(self->weapon_pred);
+		self->weapon_pred = NULL;
+	}
+}
+
+
+void WeaponPrediction_CreateEnt(void)
+{
+	gedict_t *wep_values = spawn();
+
+	wep_values->s.v.owner = EDICT_TO_PROG(self);
+	/* Force the first delta pass to include all baseline weapon state. */
+	wep_values->s.v.impulse = -1;
+	wep_values->s.v.weapon = -1;
+	wep_values->s.v.ammo_shells = -1;
+	wep_values->s.v.ammo_nails = -1;
+	wep_values->s.v.ammo_rockets = -1;
+	wep_values->s.v.ammo_cells = -1;
+	wep_values->attack_finished = -1;
+	wep_values->client_think = -1;
+	wep_values->client_nextthink = -1;
+	wep_values->client_predflags = -1;
+	wep_values->client_ping = -1;
+	wep_values->cnt = 0;
+	wep_values->cnt2 = 0;
+	ExtFieldSetSendEntity(wep_values, (func_t)WeaponPrediction_SendEntity);
+	ExtFieldSetPvsFlags(wep_values, 3);
+	if (iKey(self, "ezcsqc"))
+	{
+		WPredict_SendDefinitionsTo(self);
+		wep_values->cnt2 = 1;
+	}
+	if (iKey(self, "ezcsqc_ready"))
+	{
+		SetSendNeeded(wep_values, 0xFFFFFF, NUM_FOR_EDICT(self));
+	}
+	self->weapon_pred = wep_values;
+}
+
+
+
+
+
+////////////////
+// GlobalParams:
+// time
+// self
+// params
+///////////////
 void ClientConnect(void)
 {
 	gedict_t *p;
@@ -1776,6 +1995,8 @@ void ClientConnect(void)
 	}
 
 	SendSpecInfo(NULL, self); // get all spectator info
+	self->antilag_data = antilag_create_player(self);
+	WeaponPrediction_CreateEnt();
 
 	MakeMOTD();
 
@@ -1854,7 +2075,7 @@ void PutClientInServer(void)
 		self->s.v.weapon = W_BestWeapon();
 	W_SetCurrentAmmo();
 
-	self->attack_finished = g_globalvars.time;
+	self->attack_finished = self->client_time;
 	self->th_pain = player_pain;
 	self->th_die = PlayerDie;
 
@@ -3039,6 +3260,8 @@ void ClientDisconnect(void)
 	}
 
 	set_important_fields(self); // set classname == "" and etc
+	antilag_delete_player(self);
+	WeaponPrediction_Cleanup();
 
 // s: added conditional function call here
 	if (self->k_kicking)
@@ -3720,6 +3943,9 @@ void PlayerPreThink(void)
 		BackFromLag();
 	}
 
+	self->client_time += g_globalvars.frametime;
+	self->client_lastupdated = g_globalvars.time;
+
 	if (self->sc_stats && self->sc_stats_time && (self->sc_stats_time <= g_globalvars.time)
 			&& (match_in_progress != 1) && !isRACE())
 	{
@@ -3960,7 +4186,7 @@ void PlayerPreThink(void)
 		SetVector(self->s.v.velocity, 0, 0, 0);
 	}
 
-	if ((g_globalvars.time > self->attack_finished) && (self->s.v.currentammo == 0)
+	if ((self->client_time > self->attack_finished) && (self->s.v.currentammo == 0)
 			&& (self->s.v.weapon != IT_AXE) && (self->s.v.weapon != IT_HOOK))
 	{
 		self->s.v.weapon = W_BestWeapon();
@@ -4525,6 +4751,18 @@ void CheckLand(void)
 // time
 // self
 ///////////////
+static float CurrentClientPing(void)
+{
+	char *ping = ezinfokey(self, "ping_current");
+
+	if (!strnull(ping))
+	{
+		return atof(ping);
+	}
+
+	return atof(ezinfokey(self, "ping"));
+}
+
 void PlayerPostThink(void)
 {
 //dprint ("post think\n");
@@ -4542,6 +4780,16 @@ void PlayerPostThink(void)
 	if (self->s.v.deadflag)
 	{
 		return;
+	}
+
+	if (self->client_nextthink && self->client_time >= self->client_nextthink)
+	{
+		float held_client_time = self->client_time;
+
+		self->client_time = self->client_nextthink;
+		self->client_nextthink = 0;
+		((void(*)(void))(self->client_think))();
+		self->client_time = held_client_time;
 	}
 
 //team
@@ -4569,6 +4817,17 @@ void PlayerPostThink(void)
 #endif
 
 	W_WeaponFrame();
+	antilag_log(self, self->antilag_data);
+	self->client_predflags = 0;
+	if (cvar("sv_antilag") == 1)
+	{
+		self->client_ping = min(CurrentClientPing(), ANTILAG_REWIND_MAXPROJECTILE * 1000);
+	}
+	else
+	{
+		self->client_ping = 0;
+	}
+	WeaponPrediction_MarkSendFlags();
 
 	race_player_post_think();
 

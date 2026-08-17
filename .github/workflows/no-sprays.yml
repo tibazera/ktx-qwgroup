@@ -1,0 +1,29 @@
+name: Antilag 1 scope guard
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feature/antilag1-core
+
+jobs:
+  no-sprays:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reject spray support in the Antilag 1 series
+        shell: bash
+        run: |
+          base='${{ github.event.pull_request.base.sha || github.event.before }}'
+          test -n "$base" && test "$base" != '0000000000000000000000000000000000000000' || base=HEAD~1
+          files=$(git diff --name-only "$base" HEAD)
+          if printf '%s\n' "$files" | grep -E -i '(^|/)(sprays?\.c|sv_sprays\.c)$'; then
+            echo 'Spray source files are outside the Antilag 1 scope.' >&2
+            exit 1
+          fi
+          if git diff "$base" HEAD -- . ':(exclude).github/workflows/no-sprays.yml' ':(exclude)ANTILAG1_PORT.md' | grep -E 'MVD_PEXT1_SPRAYS|clc_spray|svc_spray|G_SPRAY(CLEAR|CLEARALL)'; then
+            echo 'Spray protocol or game hooks are outside the Antilag 1 scope.' >&2
+            exit 1
+          fi

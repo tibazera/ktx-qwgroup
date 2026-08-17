@@ -222,6 +222,7 @@ enum
 	G_SETEXTFIELDPTR,
 	G_GETEXTFIELDPTR,
 	G_SETSENDNEEDED,
+	G_SETLASTRUNTIME,
 	G_EXTENSIONS_LAST
 };
 extern qbool haveextensiontab[G_EXTENSIONS_LAST-G_EXTENSIONS_FIRST];
@@ -327,6 +328,7 @@ void WriteEntity(int to, gedict_t *ed);
 void WriteByte(int to, int data);
 void WriteShort(int to, int data);
 void WriteLong(int to, int data);
+void WriteFloat(int to, float data);
 void WriteString(int to, char *data);
 void WriteAngle(int to, float data);
 void WriteCoord(int to, float data);
@@ -584,6 +586,18 @@ qbool CanDamage(gedict_t *targ, gedict_t *inflictor);
 void T_Damage(gedict_t *targ, gedict_t *inflictor, gedict_t *attacker, float damage);
 void T_RadiusDamage(gedict_t *inflictor, gedict_t *attacker, float damage, gedict_t *ignore,
 					deathType_t dtype);
+void antilag_log(gedict_t *e, antilag_t *antilag);
+antilag_t *antilag_create_player(gedict_t *e);
+antilag_t *antilag_create_world(gedict_t *e);
+void antilag_delete_player(gedict_t *e);
+void antilag_updateworld(void);
+void antilag_lagmove_all_hitscan(gedict_t *e);
+void antilag_lagmove_all_proj(gedict_t *owner, gedict_t *e);
+void antilag_lagmove_all_proj_bounce(gedict_t *owner, gedict_t *e);
+void antilag_unmove_all(void);
+void WPredict_Initialize(void);
+void WPredict_SendDefinitionsTo(gedict_t *player);
+void UpdateProjectileSendNeeded(void);
 void T_BeamDamage(gedict_t *attacker, float damage);
 
 //items.c
@@ -1221,6 +1235,16 @@ qbool SameTeam(gedict_t *p1, gedict_t *p2);
 
 #ifndef BOT_SUPPORT
 #define bots_enabled() (false)
+// Frogbot tuning helpers are also called from mode-agnostic code (tot mode,
+// combat, item filtering). Without bot support they fall back to the same
+// defaults the k_fb_* cvars are registered with, so behaviour is preserved.
+#define FrogbotSkillLevel()      (10)
+#define FrogbotHealth()          (100)
+#define FrogbotWeapon()          (2)
+#define FrogbotQuadMultiplier()  (4)
+#define FrogbotItemPickupBonus() (false)
+#define FrogbotEasySkillMode()   (true)
+#define FrogbotBreakOnDeath()    (true)
 #else
 #include "fb_globals.h"
 #endif
