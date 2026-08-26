@@ -1131,6 +1131,21 @@ void FirstFrame(void)
 	RegisterCvarEx("k_series_t1wins", "0");
 	RegisterCvarEx("k_series_t2wins", "0");
 	RegisterCvarEx("k_series_continue", "0");
+	// k_series_team1/2: which "team" userinfo string is backend team 1 vs 2,
+	// used to bucket series map wins and forfeit credit (match.c
+	// mm_series_team1/2). The brain only sets these for clan matches (pracs,
+	// clan fixtures), where the teams are clan tags; unset keeps the red/blue
+	// defaults every queue match really uses. RegisterCvarEx preserves a
+	// value the match config already set, same as the rest of the k_series_*
+	// block.
+	RegisterCvarEx("k_series_team1", "red");
+	RegisterCvarEx("k_series_team2", "blue");
+	// k_series_playall: fixed-length series ("Game of N") — skip the clinch
+	// check and play k_series_maps to exhaustion; the backend decides the
+	// winner by map wins once every map is in. Only meaningful with
+	// k_series_bestof > 1; 0 (default) keeps first-to-clinch. Set by the
+	// brain for tournament/prac sessions whose series_format is 'fixed'.
+	RegisterCvarEx("k_series_playall", "0");
 	// k_match_start_delay: countdown seconds once both players are on the
 	// matchmade server (overrides k_count for the matchmaking auto-start).
 	RegisterCvarEx("k_match_start_delay", "15");
