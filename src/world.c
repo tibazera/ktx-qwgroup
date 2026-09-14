@@ -1131,6 +1131,21 @@ void FirstFrame(void)
 	RegisterCvarEx("k_series_t1wins", "0");
 	RegisterCvarEx("k_series_t2wins", "0");
 	RegisterCvarEx("k_series_continue", "0");
+	// k_series_team1/2: which "team" userinfo string is backend team 1 vs 2,
+	// used to bucket series map wins and forfeit credit (match.c
+	// mm_series_team1/2). The brain only sets these for clan matches (pracs,
+	// clan fixtures), where the teams are clan tags; unset keeps the red/blue
+	// defaults every queue match really uses. RegisterCvarEx preserves a
+	// value the match config already set, same as the rest of the k_series_*
+	// block.
+	RegisterCvarEx("k_series_team1", "red");
+	RegisterCvarEx("k_series_team2", "blue");
+	// k_series_playall: fixed-length series ("Game of N") — skip the clinch
+	// check and play k_series_maps to exhaustion; the backend decides the
+	// winner by map wins once every map is in. Only meaningful with
+	// k_series_bestof > 1; 0 (default) keeps first-to-clinch. Set by the
+	// brain for tournament/prac sessions whose series_format is 'fixed'.
+	RegisterCvarEx("k_series_playall", "0");
 	// k_match_start_delay: countdown seconds once both players are on the
 	// matchmade server (overrides k_count for the matchmaking auto-start).
 	RegisterCvarEx("k_match_start_delay", "15");
@@ -1157,6 +1172,25 @@ void FirstFrame(void)
 	// duel-mode default timelimit/fraglimit. Set to 0 to keep the duel default.
 	RegisterCvarEx("k_match_timelimit", "10");
 	RegisterCvarEx("k_match_fraglimit", "0");
+	// The rest of the brain-stated ruleset, applied in the same place and for
+	// the same reason as the two above (qwleague docs/aim-mode.md).
+	//
+	// k_match_dmm: the `deathmatch` value for this match. Aim mode is dmm4
+	// (full arsenal on spawn, no item respawns) and no usermode default is,
+	// so without re-applying it the mode silently plays as an ordinary dmm3
+	// duel. k_match_overtime: the k_overtime TYPE (1 time based, 2 sudden
+	// death, 3 tie-break, 4 golden frag) -- aim runs sudden death, because a
+	// 3-minute map tied at the whistle should go to the next frag rather than
+	// get a 3-minute extension bolted onto a 3-minute game.
+	//
+	// 0 in either means "the brain stated nothing", which leaves KTX's own
+	// usermode default alone -- so every mode but aim, and every older brain,
+	// behaves exactly as before these existed.
+	RegisterCvarEx("k_match_dmm", "0");
+	RegisterCvarEx("k_match_overtime", "0");
+	// k_match_map_rules: "<map>:<k_disallow_weapons bitmask> ..." for every map
+	// of the series pool. Parsed per map by mm_map_disallow_weapons().
+	RegisterCvarEx("k_match_map_rules", "");
 	// k_qwleague_url: signup URL shown to players who haven't set their token.
 	RegisterCvarEx("k_qwleague_url", "");
 	// k_token_teams: "<token> <team> ..." mapping used to force each connecting
@@ -1271,7 +1305,7 @@ void FirstFrame(void)
 	// matchmade game, so 2on2/4on4 ran with teamplay 0 / k_mode 1.
 	if (cvar_string("k_allowed_tokens")[0])
 	{
-		float tl, fl;
+		float tl, fl, dmm, ot;
 		gedict_t *jd;
 		int mm_players = (int) cvar("k_mm_players");
 		int um_arg = mm_players / 2;   // 2->1on1(1), 4->2on2(2), 8->4on4(4)
@@ -1292,6 +1326,37 @@ void FirstFrame(void)
 		if (fl > 0)
 		{
 			cvar_fset("fraglimit", fl);
+		}
+		// Same handoff, for the rest of the ruleset the brain states. Read
+		// here rather than above for the same reason tl/fl are: everything in
+		// this block has to be sampled and applied AFTER UserMode. This runs
+		// at EVERY map load, so a Bo3 re-applies it per map -- which is the
+		// whole point for the weapon bans, since one server plays the series.
+		dmm = cvar("k_match_dmm");
+		ot = cvar("k_match_overtime");
+		if (dmm > 0)
+		{
+			cvar_fset("deathmatch", dmm);
+		}
+		if (ot > 0)
+		{
+			cvar_fset("k_overtime", ot);
+		}
+		// Weapon bans, but ONLY when the brain stated a list. Inside that
+		// list a 0 is meaningful and must be written: k_disallow_weapons
+		// survives the changelevel, so a series that opened on a banned-weapon
+		// map would otherwise carry those bans through the rest of its maps.
+		// mm_map_disallow_weapons() returns 0 for a listed map that bans
+		// nothing, which is exactly that per-map reset.
+		//
+		// The emptiness guard is what keeps every other mode untouched. KTX's
+		// own default is 16 (no GL in dmm4, _reset_settings), and zeroing that
+		// for a match nobody stated rules for would quietly re-allow the GL in
+		// any dmm4 game reached another way -- an admin sandbox spawned on a
+		// dmm4 map in a non-aim mode, say.
+		if (cvar_string("k_match_map_rules")[0])
+		{
+			cvar_fset("k_disallow_weapons", mm_map_disallow_weapons());
 		}
 
 		// Fresh pre-match clocks for this map (waiting budget + warmup budget),
