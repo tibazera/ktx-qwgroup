@@ -979,6 +979,7 @@ void k_respawn(gedict_t *p, qbool body)
 	SetRespawnParms();
 	// respawn
 	PutClientInServer();
+	self->weapon_generation = (self->weapon_generation % 15) + 1;
 	WeaponPrediction_ResetBaseline();
 
 	// Keep intentional weapon-select respawn commands, but drop stale/invalid backups.
@@ -1806,12 +1807,22 @@ qbool CanConnect(void)
 	return true;
 }
 
+static qbool WeaponPrediction_ClientReady(gedict_t *p)
+{
+	if (!iKey(p, "csqcactive"))
+		return false;
+
+	return !iKey(p, "ezcsqc") || iKey(p, "ezcsqc_ready");
+}
+
 qbool WeaponPrediction_SendEntity(int sendflags)
 {
 	gedict_t *wep = self;
 	gedict_t *owner = PROG_TO_EDICT(wep->s.v.owner);
 
 	if (owner != other)
+		return false;
+	if (!WeaponPrediction_ClientReady(owner))
 		return false;
 
 	/*
@@ -1837,7 +1848,15 @@ qbool WeaponPrediction_SendEntity(int sendflags)
 	if (sendflags & WEAPONINFO_INDEX)
 	{
 		WriteByte(MSG_CSQC, owner->s.v.impulse);
-		WriteByte(MSG_CSQC, owner->weapon_index);
+		if (!iKey(owner, "ezcsqc") || iKey(owner, "ezcsqc_ready") >= 2)
+		{
+			WriteByte(MSG_CSQC, (owner->weapon_generation << WEAPONINFO_GENERATION_SHIFT)
+				| ((int)owner->weapon_index & WEAPONINFO_WEAPON_MASK));
+		}
+		else
+		{
+			WriteByte(MSG_CSQC, owner->weapon_index);
+		}
 	}
 	if (sendflags & WEAPONINFO_AMMO_SHELLS)
 		WriteByte(MSG_CSQC, owner->s.v.ammo_shells);
@@ -5033,6 +5052,9 @@ void PlayerPostThink(void)
 	else
 		self->client_ping = 0;
 
+	if (k_yawnmode)
+		self->client_predflags = (int)self->client_predflags | PRDFL_YAWNMODE;
+
 	if (cvar("k_instagib") && cvar("k_instagib_custom_models"))
 	{
 		self->client_predflags = (int)self->client_predflags | PRDFL_COILGUN;
@@ -5055,8 +5077,7 @@ void PlayerPostThink(void)
 	else if ((match_in_progress == 1) || !can_prewar(true))
 		self->client_predflags = PRDFL_FORCEOFF;
 	// disable LG prediction in prewar when underwater to avoid weird shit
-	else if ((match_in_progress != 2)
-			&& (self->s.v.weapon == IT_LIGHTNING)
+	else if ((self->s.v.weapon == IT_LIGHTNING)
 			&& (self->s.v.waterlevel > 1))
 		self->client_predflags = PRDFL_FORCEOFF;
 
