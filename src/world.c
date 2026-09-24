@@ -1165,6 +1165,13 @@ void FirstFrame(void)
 	// at the end of the match. Emitted in the stats JSON so the backend
 	// awards Elo to the remaining player regardless of frag counts.
 	RegisterCvarEx("k_match_forfeit_loser", "");
+	// k_match_forfeit_team: which series team (1/2, brain numbering) the
+	// forfeit_loser is on, so EndMatch credits the OTHER team with the map.
+	// Must be registered: a cvar_fset on an unknown cvar is silently dropped
+	// by the engine, which left this reading 0 and EndMatch falling back to
+	// frags — a forfeiting team that led on frags "won" the map and the
+	// server loaded a map the brain had already closed the series on.
+	RegisterCvarEx("k_match_forfeit_team", "0");
 	// k_match_aborted: set to "1" when the match ended without a clear
 	// winner — e.g., both players disconnected and didn't return. Emitted
 	// in the stats JSON so the backend records the session as aborted
@@ -1193,6 +1200,10 @@ void FirstFrame(void)
 	// k_match_map_rules: "<map>:<k_disallow_weapons bitmask> ..." for every map
 	// of the series pool. Parsed per map by mm_map_disallow_weapons().
 	RegisterCvarEx("k_match_map_rules", "");
+	// k_match_tag: what kind of match this is, as the brain names it ("4on4
+	// solo", "2on2 team official"). Published as serverinfo matchtag by
+	// mm_apply_match_tag(), re-applied below for the same reason as the rest.
+	RegisterCvarEx("k_match_tag", "");
 	// k_qwleague_url: signup URL shown to players who haven't set their token.
 	RegisterCvarEx("k_qwleague_url", "");
 	// k_token_teams: "<token> <team> ..." mapping used to force each connecting
@@ -1360,6 +1371,9 @@ void FirstFrame(void)
 		{
 			cvar_fset("k_disallow_weapons", mm_map_disallow_weapons());
 		}
+		// The match tag, which UserMode itself leaves alone -- but a rules
+		// reset in between (everyone left) cleared it.
+		mm_apply_match_tag();
 
 		// Fresh pre-match clocks for this map (waiting budget + warmup budget),
 		// then spawn the join-deadline ticker. If the matched players are not all
