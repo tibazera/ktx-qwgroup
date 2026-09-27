@@ -47,9 +47,18 @@ jobs:
           upstream_sha="$(git rev-parse "qwleague/${UPSTREAM_BRANCH}")"
           echo "sha=${upstream_sha}" >> "$GITHUB_OUTPUT"
 
-          if git merge-base --is-ancestor "$upstream_sha" HEAD && [ "${{ inputs.force }}" != "true" ]; then
+          baseline_file=.github/qwleague-upstream-baseline
+          test -s "$baseline_file"
+          baseline_sha="$(tr -d '[:space:]' < "$baseline_file")"
+          git cat-file -e "${baseline_sha}^{commit}"
+          echo "baseline=${baseline_sha}" >> "$GITHUB_OUTPUT"
+
+          if git merge-base --is-ancestor "$upstream_sha" "$baseline_sha" && [ "${{ inputs.force }}" != "true" ]; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
-            echo "QWLeague is already merged at ${upstream_sha}."
+            echo "QWLeague is already reviewed at ${upstream_sha}."
+          elif ! git merge-base --is-ancestor "$baseline_sha" "$upstream_sha"; then
+            echo "REFUSE: upstream history does not descend from the approved baseline ${baseline_sha}." >&2
+            exit 11
           else
             echo "needed=true" >> "$GITHUB_OUTPUT"
           fi
@@ -61,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           upstream_sha="${{ steps.upstream.outputs.sha }}"
-          baseline="$(git merge-base HEAD "qwleague/${UPSTREAM_BRANCH}")"
+          baseline="${{ steps.upstream.outputs.baseline }}"
           git diff --check "$baseline" "$upstream_sha"
           git diff --name-only "$baseline" "$upstream_sha" | sort -u > upstream-changed-files.txt
           git diff --stat "$baseline" "$upstream_sha" > upstream-diffstat.txt
