@@ -1,0 +1,24 @@
+name: CSQC build
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download current FTEQCC
+        run: |
+          curl -fsSL -o fteqw.zip https://github.com/fte-team/fteqw/releases/download/2025-09-27/fteqw-linux64-c781d13.zip
+          unzip -q fteqw.zip fteqcc64
+          chmod +x fteqcc64
+
+      - name: Compile Antilag CSQC
+        working-directory: qcsrc
+        run: ../fteqcc64 -srcfile progs.src

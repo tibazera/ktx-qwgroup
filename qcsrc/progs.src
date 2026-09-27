@@ -1,0 +1,7 @@
+../build/csprogs.dat
+#define CSQC
+antilag_csqc.qc
+
+
+weaponpred.qc
+main.qc

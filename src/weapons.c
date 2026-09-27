@@ -70,6 +70,75 @@ void W_Precache(void)
 void W_FireSpikes(float ox);
 void W_FireLightning(void);
 
+qbool SendEntity_Projectile(int sendflags)
+{
+	WriteByte(MSG_CSQC, EZCSQC_PROJECTILE);
+	if (self->pos1[0] == 0 && self->pos1[1] == 0 && self->pos1[2] == 0)
+	{
+		sendflags &= ~PROJECTILE_SPAWN_ORIGIN;
+	}
+	WriteByte(MSG_CSQC, sendflags);
+	if (sendflags & PROJECTILE_ORIGIN)
+	{
+		WriteCoord(MSG_CSQC, self->s.v.origin[0]);
+		WriteCoord(MSG_CSQC, self->s.v.origin[1]);
+		WriteCoord(MSG_CSQC, self->s.v.origin[2]);
+		WriteCoord(MSG_CSQC, self->s.v.velocity[0]);
+		WriteCoord(MSG_CSQC, self->s.v.velocity[1]);
+		WriteCoord(MSG_CSQC, self->s.v.velocity[2]);
+		WriteFloat(MSG_CSQC, g_globalvars.time);
+	}
+	if (sendflags & PROJECTILE_MODEL)
+	{
+		WriteShort(MSG_CSQC, self->s.v.modelindex);
+		WriteShort(MSG_CSQC, self->s.v.effects);
+	}
+	if (sendflags & PROJECTILE_ANGLES)
+	{
+		WriteAngle(MSG_CSQC, self->s.v.angles[0]);
+		WriteAngle(MSG_CSQC, self->s.v.angles[1]);
+		WriteAngle(MSG_CSQC, self->s.v.angles[2]);
+	}
+	if (sendflags & PROJECTILE_OWNER)
+	{
+		WriteEntity(MSG_CSQC, PROG_TO_EDICT(self->s.v.owner));
+	}
+	if (sendflags & PROJECTILE_SPAWN_ORIGIN)
+	{
+		WriteCoord(MSG_CSQC, self->pos1[0]);
+		WriteCoord(MSG_CSQC, self->pos1[1]);
+		WriteCoord(MSG_CSQC, self->pos1[2]);
+	}
+	return true;
+}
+
+static void ScheduleProjectileSendIfLive(gedict_t *projectile)
+{
+	if (!projectile || projectile == world || !projectile->s.v.modelindex)
+	{
+		return;
+	}
+	ExtFieldSetSendEntity(projectile, (func_t)SendEntity_Projectile);
+	SetSendNeeded(projectile, PROJECTILE_INITIAL, 0);
+}
+
+void UpdateProjectileSendNeeded(void)
+{
+	gedict_t *projectile;
+
+	for (projectile = world; (projectile = nextent(projectile));)
+	{
+		if (!projectile->isMissile || !projectile->s.v.modelindex || !projectile->SendEntity)
+		{
+			continue;
+		}
+		if (streq(projectile->classname, "grenade"))
+		{
+			SetSendNeeded(projectile, PROJECTILE_ORIGIN, 0);
+		}
+	}
+}
+
 /*
  ================
  W_FireAxe
@@ -79,6 +148,7 @@ void W_FireAxe(void)
 {
 	vec3_t source, dest;
 	vec3_t org;
+	antilag_lagmove_all_hitscan(self);
 
 	WS_Mark(self, wpAXE);
 
@@ -95,6 +165,7 @@ void W_FireAxe(void)
 	traceline(PASSVEC3(source), PASSVEC3(dest), false, self);
 	if (g_globalvars.trace_fraction == 1.0)
 	{
+		antilag_unmove_all();
 		return;
 	}
 
@@ -110,6 +181,7 @@ void W_FireAxe(void)
 		if (isRACE() && (PROG_TO_EDICT(g_globalvars.trace_ent)->ct == ctPlayer)
 				&& (self != PROG_TO_EDICT(g_globalvars.trace_ent)))
 		{
+			antilag_unmove_all();
 			return;
 		}
 
@@ -152,6 +224,7 @@ void W_FireAxe(void)
 		WriteCoord( MSG_MULTICAST, org[2]);
 		trap_multicast(PASSVEC3(org), MULTICAST_PVS);
 	}
+	antilag_unmove_all();
 }
 
 //============================================================================
@@ -549,6 +622,7 @@ void FireBullets(float shotcount, vec3_t dir, float spread_x, float spread_y, fl
 	qbool classic_shotgun = cvar("k_classic_shotgun");
 	qbool non_random_bullets = (k_yawnmode
 			|| (!match_in_progress && self && (self->ct == ctPlayer) && iKey(self, "nrb")));
+	antilag_lagmove_all_hitscan(self);
 
 	trap_makevectors(self->s.v.v_angle);
 	VectorScale(g_globalvars.v_forward, 10, tmp);
@@ -725,6 +799,7 @@ void FireBullets(float shotcount, vec3_t dir, float spread_x, float spread_y, fl
 	{
 		Multi_Finish();
 	}
+	antilag_unmove_all();
 }
 
 /*
@@ -1086,6 +1161,10 @@ void W_FireRocket(void)
 
 	// midair 
 	VectorCopy(self->s.v.origin, newmis->s.v.oldorigin);
+	VectorCopy(newmis->s.v.origin, newmis->pos1);
+	antilag_lagmove_all_proj(self, newmis);
+	antilag_unmove_all();
+	ScheduleProjectileSendIfLive(newmis);
 
 #ifdef BOT_SUPPORT
 	BotsRocketSpawned(newmis);
@@ -1205,7 +1284,9 @@ void W_FireLightning(void)
 					return;
 				}
 
+				antilag_lagmove_all_hitscan(self);
 				T_RadiusDamage(self, self, 35 * cells, world, dtLG_DIS);
+				antilag_unmove_all();
 
 				return;
 			}
@@ -1222,7 +1303,9 @@ void W_FireLightning(void)
 				return;
 			}
 
+			antilag_lagmove_all_hitscan(self);
 			T_RadiusDamage(self, self, 35 * cells, world, dtLG_DIS);
+			antilag_unmove_all();
 
 			return;
 		}
@@ -1254,6 +1337,7 @@ void W_FireLightning(void)
 	VectorCopy(self->s.v.origin, org);	//org = self->s.v.origin + '0 0 16';
 	org[2] += 16;
 
+	antilag_lagmove_all_hitscan(self);
 	traceline(PASSVEC3(org), org[0] + g_globalvars.v_forward[0] * 600,
 				org[1] + g_globalvars.v_forward[1] * 600, org[2] + g_globalvars.v_forward[2] * 600,
 				true, self);
@@ -1275,6 +1359,7 @@ void W_FireLightning(void)
 // qqshka - not from 'self->s.v.origin' but from 'org'
 //	LightningDamage( self->s.v.origin, tmp, self, 30 );
 	LightningDamage(org, tmp, self, 30);
+	antilag_unmove_all();
 }
 
 //=============================================================================
@@ -1438,6 +1523,10 @@ void W_FireGrenade(void)
 	setmodel(newmis, "progs/grenade.mdl");
 	setsize(newmis, 0, 0, 0, 0, 0, 0);
 	setorigin(newmis, PASSVEC3(self->s.v.origin));
+	VectorCopy(newmis->s.v.origin, newmis->pos1);
+	antilag_lagmove_all_proj_bounce(self, newmis);
+	antilag_unmove_all();
+	ScheduleProjectileSendIfLive(newmis);
 
 #ifdef BOT_SUPPORT
 	BotsGrenadeSpawned(newmis);
@@ -1473,6 +1562,7 @@ void launch_spike(vec3_t org, vec3_t dir)
 	setmodel(newmis, "progs/spike.mdl");
 	setsize(newmis, 0, 0, 0, 0, 0, 0);
 	setorigin(newmis, PASSVEC3(org));
+	VectorCopy(newmis->s.v.origin, newmis->pos1);
 
 	// Yawnmode: spikes velocity is 1800 instead of 1000
 	// - Molgrum
@@ -1646,7 +1736,7 @@ void W_FireSuperSpikes(void)
 	self->ps.wpn[wpSNG].attacks++;
 
 	sound(self, CHAN_WEAPON, "weapons/spike2.wav", 1, ATTN_NORM);
-	self->attack_finished = g_globalvars.time + 0.2;
+	self->attack_finished = self->client_time + 0.2;
 
 	if (match_in_progress == 2)
 	{
@@ -1667,6 +1757,9 @@ void W_FireSuperSpikes(void)
 	setsize(newmis, 0, 0, 0, 0, 0, 0);
 	g_globalvars.msg_entity = EDICT_TO_PROG(self);
 	WriteByte( MSG_ONE, SVC_SMALLKICK);
+	antilag_lagmove_all_proj(self, newmis);
+	antilag_unmove_all();
+	ScheduleProjectileSendIfLive(newmis);
 }
 
 void W_FireSpikes(float ox)
@@ -1705,7 +1798,7 @@ void W_FireSpikes(float ox)
 	self->ps.wpn[wpNG].attacks++;
 
 	sound(self, CHAN_WEAPON, "weapons/rocket1i.wav", 1, ATTN_NORM);
-	self->attack_finished = g_globalvars.time + 0.2;
+	self->attack_finished = self->client_time + 0.2;
 
 	if (match_in_progress == 2)
 	{
@@ -1721,6 +1814,9 @@ void W_FireSpikes(float ox)
 	VectorAdd(tmp, self->s.v.origin, tmp);
 	tmp[2] += 16;
 	launch_spike(tmp, dir);
+	antilag_lagmove_all_proj(self, newmis);
+	antilag_unmove_all();
+	ScheduleProjectileSendIfLive(newmis);
 
 	g_globalvars.msg_entity = EDICT_TO_PROG(self);
 	WriteByte( MSG_ONE, SVC_SMALLKICK);
@@ -1810,6 +1906,7 @@ void W_SetCurrentAmmo(void)
 		case IT_AXE:
 			self->s.v.currentammo = 0;
 			self->weaponmodel = "progs/v_axe.mdl";
+			self->weapon_index = 1;
 			self->s.v.weaponframe = 0;
 			if (vw_enabled)
 			{
@@ -1820,6 +1917,7 @@ void W_SetCurrentAmmo(void)
 
 		case IT_SHOTGUN:
 			self->s.v.currentammo = self->s.v.ammo_shells;
+			self->weapon_index = 2;
 			if (cvar("k_instagib_custom_models") && cvar("k_instagib"))
 			{
 				self->weaponmodel = "progs/v_coil.mdl";
@@ -1840,6 +1938,7 @@ void W_SetCurrentAmmo(void)
 
 		case IT_SUPER_SHOTGUN:
 			self->s.v.currentammo = self->s.v.ammo_shells;
+			self->weapon_index = 3;
 			self->weaponmodel = "progs/v_shot2.mdl";
 			self->s.v.weaponframe = 0;
 			items |= IT_SHELLS;
@@ -1852,6 +1951,7 @@ void W_SetCurrentAmmo(void)
 
 		case IT_NAILGUN:
 			self->s.v.currentammo = self->s.v.ammo_nails;
+			self->weapon_index = 4;
 			self->weaponmodel = "progs/v_nail.mdl";
 			self->s.v.weaponframe = 0;
 			items |= IT_NAILS;
@@ -1864,6 +1964,7 @@ void W_SetCurrentAmmo(void)
 
 		case IT_SUPER_NAILGUN:
 			self->s.v.currentammo = self->s.v.ammo_nails;
+			self->weapon_index = 5;
 			self->weaponmodel = "progs/v_nail2.mdl";
 			self->s.v.weaponframe = 0;
 			items |= IT_NAILS;
@@ -1875,6 +1976,7 @@ void W_SetCurrentAmmo(void)
 			break;
 
 		case IT_GRENADE_LAUNCHER:
+			self->weapon_index = 6;
 			if (isCA())
 			{
 				self->s.v.currentammo = self->ca_ammo_grenades;
@@ -1895,6 +1997,7 @@ void W_SetCurrentAmmo(void)
 
 		case IT_ROCKET_LAUNCHER:
 			self->s.v.currentammo = self->s.v.ammo_rockets;
+			self->weapon_index = 7;
 			self->weaponmodel = "progs/v_rock2.mdl";
 			self->s.v.weaponframe = 0;
 			items |= IT_ROCKETS;
@@ -1907,6 +2010,7 @@ void W_SetCurrentAmmo(void)
 
 		case IT_LIGHTNING:
 			self->s.v.currentammo = self->s.v.ammo_cells;
+			self->weapon_index = 8;
 			self->weaponmodel = "progs/v_light.mdl";
 			self->s.v.weaponframe = 0;
 			items |= IT_CELLS;
@@ -1938,6 +2042,7 @@ void W_SetCurrentAmmo(void)
 
 		default:
 			self->s.v.currentammo = 0;
+			self->weapon_index = 1;
 			self->weaponmodel = "";
 			self->s.v.weaponframe = 0;
 			self->vw_index = 0;
@@ -2105,13 +2210,13 @@ void W_Attack(void)
 		case IT_AXE:
 			if (self->ctf_flag & CTF_RUNE_HST)
 			{
-				self->attack_finished = g_globalvars.time + 0.5
+				self->attack_finished = self->client_time + 0.5
 						- (cvar("k_ctf_rune_power_hst") / 10);
 				HasteSound(self);
 			}
 			else
 			{
-				self->attack_finished = g_globalvars.time + 0.5;
+				self->attack_finished = self->client_time + 0.5;
 			}
 
 			// crt - no axe sound for spec
@@ -2144,7 +2249,7 @@ void W_Attack(void)
 			player_shot1();
 			if (self->ctf_flag & CTF_RUNE_HST)
 			{
-				self->attack_finished = g_globalvars.time + 0.5
+				self->attack_finished = self->client_time + 0.5
 						- (cvar("k_ctf_rune_power_hst") / 10);
 				HasteSound(self);
 			}
@@ -2152,15 +2257,15 @@ void W_Attack(void)
 			{
 				if (cvar("k_instagib") == 1)
 				{
-					self->attack_finished = g_globalvars.time + 1.2;
+					self->attack_finished = self->client_time + 1.2;
 				}
 				else if (cvar("k_instagib") == 2)
 				{
-					self->attack_finished = g_globalvars.time + 0.7;
+					self->attack_finished = self->client_time + 0.7;
 				}
 				else
 				{
-					self->attack_finished = g_globalvars.time + 0.5;
+					self->attack_finished = self->client_time + 0.5;
 				}
 			}
 
@@ -2171,13 +2276,13 @@ void W_Attack(void)
 			player_shot1();
 			if (self->ctf_flag & CTF_RUNE_HST)
 			{
-				self->attack_finished = g_globalvars.time + 0.5
+				self->attack_finished = self->client_time + 0.5
 						- (cvar("k_ctf_rune_power_hst") / 20);
 				HasteSound(self);
 			}
 			else
 			{
-				self->attack_finished = g_globalvars.time + (k_yawnmode ? 0.8 : 0.7);
+				self->attack_finished = self->client_time + (k_yawnmode ? 0.8 : 0.7);
 			}
 
 			W_FireSuperShotgun();
@@ -2197,13 +2302,13 @@ void W_Attack(void)
 			player_rocket1();
 			if (self->ctf_flag & CTF_RUNE_HST)
 			{
-				self->attack_finished = g_globalvars.time + 0.5
+				self->attack_finished = self->client_time + 0.5
 						- (cvar("k_ctf_rune_power_hst") / 10);
 				HasteSound(self);
 			}
 			else
 			{
-				self->attack_finished = g_globalvars.time + 0.6;
+				self->attack_finished = self->client_time + 0.6;
 			}
 
 			W_FireGrenade();
@@ -2213,20 +2318,20 @@ void W_Attack(void)
 			player_rocket1();
 			if (self->ctf_flag & CTF_RUNE_HST)
 			{
-				self->attack_finished = g_globalvars.time + 0.5
+				self->attack_finished = self->client_time + 0.5
 						- (cvar("k_ctf_rune_power_hst") / 20);
 				HasteSound(self);
 			}
 			else
 			{
-				self->attack_finished = g_globalvars.time + 0.8;
+				self->attack_finished = self->client_time + 0.8;
 			}
 
 			W_FireRocket();
 			break;
 
 		case IT_LIGHTNING:
-			self->attack_finished = g_globalvars.time + 0.1;
+			self->attack_finished = self->client_time + 0.1;
 			sound(self, CHAN_AUTO, "weapons/lstart.wav", 1, ATTN_NORM);
 			self->s.v.ltime = g_globalvars.time;
 			player_light1();
@@ -2242,7 +2347,7 @@ void W_Attack(void)
 				player_chain1();
 			}
 
-			self->attack_finished = g_globalvars.time + 0.1;
+			self->attack_finished = self->client_time + 0.1;
 			break;
 	}
 }
@@ -2366,7 +2471,7 @@ qbool W_ChangeWeapon(int wp)
 {
 	int it, am, fl = 0;
 
-	if ((g_globalvars.time < self->attack_finished) && wp != 22)
+	if ((self->client_time < self->attack_finished) && wp != 22)
 	{
 		return false;
 	}
@@ -2502,7 +2607,7 @@ qbool CycleWeaponCommand(void)
 {
 	int i, it, am;
 
-	if (g_globalvars.time < self->attack_finished)
+	if (self->client_time < self->attack_finished)
 	{
 		return false;
 	}
@@ -2601,7 +2706,7 @@ qbool CycleWeaponReverseCommand(void)
 {
 	int i, it, am;
 
-	if (g_globalvars.time < self->attack_finished)
+	if (self->client_time < self->attack_finished)
 	{
 		return false;
 	}
@@ -2913,7 +3018,7 @@ void W_WeaponFrame(void)
 		return;
 	}
 
-	if (g_globalvars.time < self->attack_finished)
+	if (self->client_time < self->attack_finished)
 	{
 		return;
 	}
